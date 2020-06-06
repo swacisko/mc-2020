@@ -4,17 +4,42 @@
 
 #include <datastructures/InfInt.h>
 #include <graphs/treewidth/TreewidthDP.h>
+//#include <CONTESTS/PACE20/Pace20Params.h>
 #include "CONTESTS/MC20/mc20.h"
 #include "graphs/components/ConnectedComponents.h"
 #include "graphs/GraphInducer.h"
 #include "graphs/treewidth/pace.h"
 #include "graphs/treewidth/TreewidthDecomposition.h"
 #include "graphs/GraphUtils.h"
+#include "utils/RandomNumberGenerators.h"
 #include "combinatorics/GrayCode.h"
-
+//#include "combinatorics/CombinatoricUtils.h"
 typedef InfInt big_integer;
 
 string to_string(big_integer g){ return g.toString(); }
+
+struct Triple{
+    static UniformIntGenerator gen;
+    Triple(){
+        a = gen.rand();
+        b = gen.rand();
+        c = gen.rand();
+
+        LL D = 1'000'000'001ll;
+        a += c + D;
+        b += c+D;
+    }
+    LL a,b,c;
+    friend ostream& operator<<(ostream& str, Triple& t);
+};
+
+ostream& operator<<(ostream& str, Triple& t){
+    str << "(" << t.a << "," << t.b << "," << t.c << ")";
+    return str;
+}
+UniformIntGenerator Triple::gen( 0ll, 1ll << 60 );
+
+const int MAX_REC_DEPTH_LOG = 0;
 
 namespace MC20{
 
@@ -24,12 +49,82 @@ namespace MC20{
     vector< unordered_set<int> > inClauses; // inClauses[i] is a set of clauses that contain variable i (perhaps begated)
     vector< vector< pair<int,int> > > inClausesSign; // inClausesSign[i] is a vector of pairs (clause, sign_of_i_in_that_clause)
 
+    VB varSetValue;
 
     int cls; // number of clauses
     int vars; // number of variables
     big_integer result;
 
+    //***********************************
 
+    vector<Triple> varHashes;
+
+    LL getClauseHash(unordered_set<int>& clause){
+        LL hash = 0;
+        LL mod = 0;
+        for( int d : clause ){
+            if(d>0) hash ^= varHashes[d].a;
+            else hash ^= varHashes[-d].b;
+
+            mod ^= varHashes[ abs(d) ].c;
+        }
+        return hash % ( mod + 1'000'000'000ll );
+    }
+
+    LL getClausesHash( vector<unordered_set<int>> & cl ){
+        LL hash = 0;
+        for( auto c : cl ) if( !cl.empty() ) hash ^= getClauseHash( c );
+        return hash;
+    }
+
+    unordered_map<LL,big_integer> statesMap;
+    deque<LL> statesQueue;
+    const int MAX_STATES = 1'000'000;
+
+    big_integer extractStateValue( vector<unordered_set<int>>& cl ){
+        LL hash = getClausesHash(cl);
+        auto it = statesMap.find(hash);
+        if( it == statesMap.end() ) return -1;
+        else return it->second;
+    }
+
+    void addToStates( vector<unordered_set<int>> &cl, big_integer res ){
+//            return;
+        LL hash = getClausesHash(cl);
+
+//            cerr << "adding hash: " << hash << endl;
+
+        if( statesQueue.size() > MAX_STATES ){
+            LL toRemove = statesQueue.front();
+            statesQueue.pop_front();
+            statesMap.erase(toRemove);
+        }
+
+        statesMap[hash] = res;
+        statesQueue.push_back(hash);
+    }
+
+
+    //***********************************
+
+
+
+    // true if ass satisfies clause c
+    bool satisfiesClause(VB &ass, int c) {
+        for (int v : clauses[c]) {
+            if (v > 0 && ass[v] == true) return true;
+            else if (v < 0 && ass[-v] == false) return true;
+        }
+        return false;
+    }
+
+    // true if ass satisfies all clauses
+    bool satisfiesAllClauses(VB &ass) {
+        for (int c = 0; c < cls; c++) {
+            if (!satisfiesClause(ass, c)) return false;
+        }
+        return true;
+    }
 
     bool falsifiesClause(VI &ass, int c) {
         const bool debug = false;
@@ -53,6 +148,8 @@ namespace MC20{
         }
         return false;
     }
+
+
 
     big_integer bruteForce() {
         const bool debug = false;
@@ -126,19 +223,23 @@ namespace MC20{
 
     class Primal {
     public:
-        Primal( vector< unordered_set<int> >& clauses, vector< unordered_set<int> >& inClauses, int cls, int vars ){
+        Primal( vector< unordered_set<int> >& clauses, vector< unordered_set<int> >& inClauses, int cls, int vars, int recDepth ){
             this->clauses = clauses;
             this->inClauses = inClauses;
             varSetValue = VB(vars + 1, false);
             this->vars = vars;
             this->cls = cls;
             result = 1;
+            this->recDepth = recDepth;
         }
+        int recDepth;
         VVI V; // primal graph
         VVI comps;
         vector< unordered_set<int> > clauses; // clauses[i] is the set of variables (e.g. {4, -6} )
         vector< unordered_set<int> > inClauses; // inClauses[i] is a set of clauses that contain variable i (perhaps begated)
         vector< vector< pair<int,int> > > inClausesSign; // inClausesSign[i] is a vector of pairs (clause, sign_of_i_in_that_clause)
+
+        void logSpacing(){ for( int i=0; i<recDepth; i++ ) cerr << "  "; }
 
         VB varSetValue;
 
@@ -152,8 +253,32 @@ namespace MC20{
                 if(result == 0) break;
 
                 changesDone = false;
+//                cerr << endl << " NEXT PREPROCESSING ITERATION!" << endl << endl;
+
 
                 for( int i=0; i<cls; i++ ) { // this needs to be done just once, not in every iteration
+                    /*set<int> toRemove;
+                    for (int d : clauses[i]) {
+                        if (clauses[i].count(-d)) {
+    //                            cerr << "clause " << i << " contains " << d << " and " << -d << endl;
+
+                            // below we get the case     -1 0  ...   1 -1 0     ...  - we do not multiply by 2 since clause -1 forces false assignment
+                            bool t = false;
+                            for( int c : inClauses[ abs(d) ] ) if( clauses[c].count(d) && clauses[c].size() == 1 ) t = true;
+                            if(t) continue;
+
+                            if (inClauses[abs(d)].size() == 1) {
+                                toRemove.insert(abs(d));
+                            }
+                        }
+                    }
+                    for (int d : toRemove) {
+                        cerr << "Removing " << d << " and " << -d << " from clause " << i << ": " << clauses[i] << endl;
+                        clauses[i].erase(d);
+                        clauses[i].erase(-d);
+                        inClauses[d].clear();
+                        if (clauses[i].empty()) result *= 2;
+                    }*/
 
                     { // test new try
                         for (int d : clauses[i]) {
@@ -171,42 +296,62 @@ namespace MC20{
 
                     if(result == 0) break;
 
+//                    DEBUG(clauses);
+//                    DEBUG(inClauses);
+//                    DEBUG(varSetValue);
+//                    ENDL(2);
+
+
                     unordered_set<PII, pairhash> clausesToClear;
 
                     if( clauses[i].size() == 1 ){
                         int d = abs(*clauses[i].begin());
                         bool assSign = ( *clauses[i].begin() > 0 );
 
+
+//                        cerr << "d = " << d << "    clauses[i]: " << clauses[i] << "   inClauses[d]: " << inClauses[d] << endl;
+
                         VI temp( ALL(inClauses[d]) );
                         for( int c : temp ){
+//                            DEBUG(c);
                             if( clauses[c].count( d * ( assSign ? 1 : -1 ) )  ){
                                 clausesToClear.insert( PII(c,d) );
                                 varSetValue[d] = true;
                             }else{
                                 if( clauses[c].count( d * (assSign ? -1 : 1) ) && clauses[c].size() == 1 ){
-                                    cerr << "nullifying result" << endl;
+//                                    cerr << "nullifying result" << endl;
                                     result = 0;
+//                                cout << "s mc 0" << endl;
                                     return;
                                 }
 
+//                                cerr << "Removing (" << d * ( assSign ? -1 : 1 )<< ") from clause " << c << endl;
                                 clauses[c].erase( d * ( assSign ? -1 : 1 ) ); // removing -d from that clause if possible, since it assigns false
+
+//                                bool add = inClauses[d].size() > 0;
                                 inClauses[d].erase(c);
+//                                if (inClauses[d].empty() && add) result *= 2;
                             }
                         }
 
                     }
 
                     if( !clausesToClear.empty() ){
+//                        DEBUG(clausesToClear);
 
                         changesDone = true;
                         for(PII c : clausesToClear){
+//                            cerr << "Clearing clause " << c.first << ": " << clauses[c.first] << " because of variable " << c.second << endl;
                             for( int x : clauses[c.first] ){
+//                                bool add = inClauses[ abs(x) ].size() > 0;
                                 inClauses[ abs(x) ].erase(c.first);
+//                                if (inClauses[ abs(x) ].empty()  & add ) result *= 2;
                             }
                             clauses[c.first].clear();
                             inClauses[c.second].erase(c.first);
                         }
 
+//                        cerr << endl;
                     }
 
 
@@ -216,8 +361,12 @@ namespace MC20{
 
             int power = 0;
             for( int i=1;i<=vars;i++ ) if( inClauses[i].empty() && varSetValue[i] == false ) power++;
+//            cerr << "unsetVars power: " << power << endl;
             if( power > 0 ) result *= StandardUtils::binaryPower( big_integer(2), power );
+//            if( power > 0 ) result <<= power;
 
+
+//            cerr << "result after clearing clauses: " << to_string(result) << endl;
             if( result == 0 ) return;
 
             inClausesSign = vector<vector<pair<int, int> > >(vars + 1);
@@ -228,6 +377,46 @@ namespace MC20{
                     else if (clauses[c].count(i) > 0 && clauses[c].count(-i) > 0) inClausesSign[i].push_back({c, -1});
                 }
             }
+
+
+            /*{
+                VI clsSizeCnt(vars, 0);
+                for (int i = 0; i < cls; i++) clsSizeCnt[clauses[i].size()]++;
+                logSpacing();
+                cerr << "After preprocessing there are clauses with sizes:  ";
+                for (int i = 2; i <= 4; i++) cerr << "(" << "s:" << i << ",cnt:" << clsSizeCnt[i] << ")  ";
+                cerr << " ... " << endl;
+            }*/
+
+            auto writeBinaryClauses = [=](){
+                set<int> cla;
+                for( int i=1; i<vars+1; i++ ){
+                    bool written = false;
+                    for(int c : inClauses[i]){
+                        if( clauses[c].size() == 2 ){
+                            cerr << "clauses[" << c << "]: " << clauses[c] << endl;
+                            written = true;
+                        }
+                    }
+                    if( written ) cerr << endl;
+                }
+
+//                { // write all binary clauses
+//                    set<int> cla;
+//                    for( int i=1; i<vars+1; i++ ){
+//                        for(int c : inClauses[i]) cla.insert( c );
+//                    }
+//
+//                    for(int c : cla){
+//                        if( clauses[c].size() == 2 ){
+//                            cerr << "clauses[" << c << "]: " << clauses[c] << endl;
+//                        }
+//                    }
+//                }
+//                exit(1);
+            };
+
+//            writeBinaryClauses();
 
         }
 
@@ -297,6 +486,28 @@ namespace MC20{
             for (int i = (int) comps.size() - 1; i >= 0; i--) {
                 if (comps[i].size() == 1) {
                     int isolated = comps[i][0] + 1;
+
+                    /* VI toRemove;
+                     for (int d : inClauses[isolated]) {
+                         if (clauses[d].size() <= 2) {
+                             if (debug)
+                                 cerr << "\tClearing component " << comps[i] << "  with occurence in clause "
+                                      << clauses[d] << endl;
+ //                        clauses[d].clear();
+                             toRemove.push_back(d);
+ //                        DEBUG( V[ isolated ] );
+ //                        exit(1);
+                         }
+
+                     }
+
+                     for (int d : toRemove) {
+                         cerr << "anything at all" << endl;
+                         if (clauses[d].size() == 2) result *= 2;
+                         inClauses[isolated].erase(d);
+                     }*/
+
+
                     swap(comps[i], comps.back());
                     comps.pop_back();
                 }
@@ -306,17 +517,32 @@ namespace MC20{
                 DEBUG(clauses);
                 DEBUG(inClauses);
             }
+//        exit(1);
         }
 
         big_integer getBranchedResultForComponent( InducedGraph& g, TreewidthDecomposition& decomp, int depth ){
             const bool debug = false;
-
+//            InducedGraph g = GraphInducer::induce(V, cmp);
+//            TREEWIDTH trw;
+//            volatile sig_atomic_t tle = 0;
+//            TreewidthDecomposition decomp = trw.main(g.V, 20, tle); // just for test, better make it 100 for
+//            assert(decomp.isCorrect());
             VVI tree = decomp.getStructure();
             VVI bags = decomp.getBags();
             for( VI& b : bags ) for(int& d : b) d = 1 + g.nodes[d];
 
             if(debug){
                 DEBUG(bags.size());
+//                DEBUG(bags);
+//                cerr << "non-empty clauses containing some node from bags:" << endl;
+//                for( int i=0; i<cls; i++ ){
+//                    for( int v : g.nodes ){
+//                        if( clauses[i].count(v) ) {
+////                            cerr << "clasues[" << i << "]: " << clauses[i] << endl;
+////                            break;
+//                        }
+//                    }
+//                }
 
             }
 
@@ -328,9 +554,80 @@ namespace MC20{
                 for (int b : bags[i]) inBags[b].push_back(i);
             }
 
+//            if (debug) DEBUG(inBags);
+
             VI squares(vars+1,0);
 
-            {// squares of bags sizes
+            bool useSmallestClauses = true;
+            bool useLargestBags = true;
+
+            if( useLargestBags && useSmallestClauses ) depth >>= 1;
+
+            if(useSmallestClauses){
+                unordered_set<int> allVars;
+                for(VI& b : bags) allVars.insert(ALL(b));
+                VI sq(vars+1,0);
+                int X = 4;
+                VVI cntDegClause(vars+1, VI(X,0));
+                for(int v : allVars){
+                    for( int c : inClauses[v] ){
+                        sq[v] += clauses[c].size() * clauses[c].size();
+                        if( clauses[c].size() < X ) cntDegClause[v][ clauses[c].size() ]++;
+                    }
+                }
+
+                VI t(ALL(allVars));
+                sort( ALL(t), [&sq, &cntDegClause, &X](int a, int b){
+                    for( int i=2; i<X; i++ ) if( cntDegClause[a][i] != cntDegClause[b][i] ) return cntDegClause[a][i] > cntDegClause[b][i];
+                    if(sq[a] != sq[b]) return sq[a] > sq[b];
+                    else return a > b;
+                } );
+
+//                bool highDegClauses = true;
+//                for( int i=2; i<5; i++ ) if( cntDegClause[ t[0] ][i] > 0 ) highDegClauses = false;
+//
+//                if( !highDegClauses ) {
+                for (int i = 0; i < depth; i++) {
+                    int b = t[i];
+                    branchingNodes.push_back(b);
+                    if (debug) {
+                        logSpacing();
+                        cerr << "Adding to branching nodes node " << b
+                             << " that has sum of clauses-size-square equals " << sq[b] << endl
+                             << "\tand occurs in clauses: ";
+                        for (auto c : inClauses[b]) {
+                            logSpacing();
+                            cerr << clauses[c] << endl;
+                        }
+                        cerr << endl;
+                    }
+                }
+//                }
+
+//                DEBUG(branchingNodes);
+//                    exit(1);
+            }
+
+            /* { // greatest degree in g.V
+                 VI nd(g.V.size());
+                 iota(ALL(nd),0);
+                 sort( ALL(nd), [=,&g](int a, int b){
+                     if( g.V[a].size() != g.V[b].size() ) return g.V[a].size() > g.V[b].size();
+                     else if(inClauses[a].size() != inClauses[b].size()) return inClauses[a].size() > inClauses[b].size();
+                     else return a > b;
+                 } );
+                 for(int i=0; i<depth; i++){
+                     int b = g.nodes[ nd[i] ];
+                     branchingNodes.push_back( b );
+                     cerr << "Adding node " << b << " with g.V degree: " << g.V[nd[i]].size() << " and inClauses.size(): " << inClauses[b].size() << endl;
+                 }
+             }*/
+
+
+
+            if( useLargestBags ){// squares of bags sizes
+//                logSpacing(); cerr << "HIGH DEG CLAUSES! Selecting nodes with largest bag.size square" << endl;
+                if( useLargestBags && useSmallestClauses ) depth <<= 1;
 
                 for (int i = 0; i < inBags.size(); i++) for (int b : inBags[i]) squares[i] += bags[b].size() *
                                                                                               bags[b].size();
@@ -343,28 +640,60 @@ namespace MC20{
                     presVars.insert(ALL(bags[i]));
                 }
 
-                for (int i = 0; i < depth; i++) {
+//            if(debug) cerr << "presVars: "; for(auto it : presVars) cerr << it << " "; cerr << endl;
+
+                unordered_set<int> inBrN( ALL(branchingNodes) );
+
+//                DEBUG(branchingNodes);
+
+                for (int i = 0; branchingNodes.size() < depth; i++) {
                     branchingNodes.push_back(*presVars.begin());
                     presVars.erase(presVars.begin());
 
                     int b = branchingNodes.back();
+
+                    if( inBrN.count(b) ){
+//                        logSpacing(); cerr << b << " already in branching nodes" << endl;
+                        branchingNodes.pop_back();
+                    }else inBrN.insert(b);
+
+
                     if (debug) {
+                        logSpacing();
                         cerr << "Adding to branching nodes node " << b << " that has sum of bags-size-square equals "
-                             << squares[b] << endl << "\tand occurs in bags of sizes: ";
+                             << squares[b] << endl;
+                        logSpacing();
+                        cerr << "\tand occurs in bags of sizes: ";
                         for (auto B : inBags[b]) cerr << bags[B].size() << " ";
                         cerr << endl;
-
+                        logSpacing();
                         for( auto c : inClauses[b] ) cerr << "\t" << clauses[c] << endl;
                         cerr << endl;
                     }
                 }
 
+//                DEBUG(branchingNodes);
+
             }
 
 
 
+
+
+
+
+//            { // #TEST selecting branching nodes as those that occur in clauses with small number of variables
+//                branchingNodes.clear();
+//                VI v(ALL(presVars));
+//            }
+
             if(debug){
                 DEBUG(branchingNodes);
+//                for( int i=0; i<=vars; i++ ){
+//                    if( inBags[i].size() == 1 ){
+//                        cerr << "Variable " << i << " occurse just in one bag: " << bags[ inBags[i][0] ] << endl;
+//                    }
+//                }
             }
 
             auto gClauses = clauses; gClauses.clear();
@@ -376,15 +705,18 @@ namespace MC20{
                 for( int v : g.nodes ){
                     allClauses.insert( ALL(inClauses[v+1]) );
                     assert( !inClauses[v+1].empty() );
+//                    cerr << "inClauses[" << v << "]: " << inClauses[v+1] << endl;
                 }
 
                 if(debug){
                     DEBUG(allClauses.size());
                     DEBUG(g.nodes.size());
+//                    DEBUG(g.nodes);
                 }
 
                 for( int c : allClauses ){
                     gClauses.push_back( clauses[c] );
+//                    cerr << "Adding clauses[" << c << "]: " << clauses[c] << endl;
                     for( int d : clauses[c] ){
                         gInClauses[ abs(d) ].insert( (int)gClauses.size()-1 );
                         allVars.insert( abs(d) );
@@ -402,9 +734,20 @@ namespace MC20{
                 if(debug){
                     DEBUG(gClauses.size());
                     DEBUG(gInClauses.size());
+//                    DEBUG(gClauses);
+//                    DEBUG(gInClauses);
                 }
             }
 
+
+//            {
+//                auto stateValue = extractStateValue(gClauses);
+//                if( stateValue != -1 ){
+//                    logSpacing(); cerr << "EXTRACTING CACHED STATE VALUE 2!" << endl;
+//                    addToStates( gClauses,stateValue ); // adding, to put it to the back of the queue
+//                    return stateValue;
+//                }
+//            }
 
             big_integer res = 0;
             for( int A = 0; A < (1<<depth); A++ ){
@@ -418,52 +761,114 @@ namespace MC20{
                     }
                 }
 
+//                for( int i=0; i<sat.size(); i++ ) cerr << "Setting variable " << branchingNodes[i] << " to " << sat[i] << endl;
+
                 auto newClauses = gClauses;
                 auto newInClauses = gInClauses;
                 for( int i=0; i<depth; i++ ){
                     newClauses.push_back( { sat[i] ? branchingNodes[i] : -branchingNodes[i] } );
+//                    if(debug) cerr << "Added new clause " << newClauses.back() << endl;
                     newInClauses[ branchingNodes[i] ].insert( (int)newClauses.size()-1 );
                 }
 
-                if(debug){
-                    ENDL(2);
-                    cerr << "Starting new Primal, A = " << A << " / " << (1<<depth) << endl;
+                if(recDepth <= MAX_REC_DEPTH_LOG){
+//                    ENDL(2);
+                    logSpacing();cerr << "Starting new Primal, A = " << A << " / " << (1<<depth)-1 << endl;
                 }
 
+//                DEBUG(newClauses); DEBUG(newInClauses); DEBUG( newClauses.size() ); DEBUG(vars);
 
-                Primal prim( newClauses, newInClauses, newClauses.size(), vars );
+                Primal prim( newClauses, newInClauses, newClauses.size(), vars, recDepth+1 );
+
+                for( int i=0; i<=vars; i++ ) if( newInClauses[i].empty() ) prim.varSetValue[i] = true;
+
+//                cerr << "Preprocess" << endl;
                 prim.preprocess();
-                prim.createGraph();
+//                cerr << "Creating graph" << endl;
 
-                {
-                    DEBUG(prim.V.size());
-                    {
-                        auto cmpgv = prim.comps;
-                        cerr << endl << "sizes (>2) of comps of prim.V: "; for(auto c : cmpgv) if(c.size() > 2) cerr << c.size() << " ";
-                        cerr << endl;
+
+//                auto stateValue = extractStateValue(prim.clauses);
+//                if( stateValue != -1 ){
+//                    logSpacing(); cerr << "EXTRACTING CACHED STATE VALUE 3!" << endl;
+//                    addToStates( prim.clauses,stateValue ); // adding, to put it to the back of the queue
+//                    res += stateValue;
+//                }
+//                else {
+
+                if (prim.result > 0) {
+
+                    prim.createGraph();
+
+                    if (debug) {
+                        logSpacing();
+                        DEBUG(prim.V.size());
+                        {
+                            auto cmpgv = prim.comps;
+                            ENDL(1);
+                            logSpacing();
+                            cerr << "sizes (>2) of comps of prim.V: ";
+                            for (auto c : cmpgv) if (c.size() > 2) cerr << c.size() << " ";
+                            cerr << endl;
+                        }
                     }
+
+//                    cerr << "getResult" << endl;
+                    auto satRes = prim.getResult();
+
+//                        addToStates(prim.clauses, satRes);
+
+                    assert(satRes >= 0);
+
+                    /*if (satRes == 0) {
+                        logSpacing();
+                        cerr << "!!! satRes == 0 !!!" << endl;
+                    }*/
+
+                    if (debug) {
+                        logSpacing();
+                        DEBUG(satRes);
+                    }
+                    res += satRes;
+                }else{
+//                        addToStates(prim.clauses, 0);
                 }
 
-                if( prim.result != 0 ) {
-                    auto satRes = prim.getResult();
-                    assert(satRes >= 0);
-                    if(debug) DEBUG(satRes);
-                    res += satRes;
-                }
+//                }
             }
 
+
+//            addToStates( gClauses,res );
+//            if(debug) DEBUG(res);
+
+//            exit(1);
             return res;
         }
 
 
-        big_integer getResultForComponent(VI cmp, int tw_iters = 20) {
+        big_integer getResultForComponent(VI cmp, int tw_iters = 15) {
             const bool debug = false;
+
+
+            unordered_set<int> temp;
+            for (int v : cmp) {
+                for (int c : inClauses[v + 1]) temp.insert(c);
+            }
+            vector<unordered_set<int>> cmpClauses;
+            for (int c : temp) cmpClauses.push_back(clauses[c]);
+            auto stateValue = extractStateValue(cmpClauses);
+//            auto stateValue = -1;
+            if (stateValue != -1) {
+//                logSpacing();  cerr << "EXTRACTING CACHED STATE VALUE 1 !" << endl;
+//                addToStates(cmpClauses, stateValue); // adding, to put it to the back of the queue
+                return stateValue;
+            }
 
 
             InducedGraph g = GraphInducer::induce(V, cmp);
 
             TREEWIDTH trw;
             volatile sig_atomic_t tle = 0;
+//            logSpacing();
             TreewidthDecomposition decomp = trw.main(g.V, tw_iters, tle); // just for test, better make it 100 for
             assert(decomp.isCorrect());
 
@@ -472,13 +877,40 @@ namespace MC20{
 
 
             int tw = max_element(ALL(bags), [](VI &b1, VI &b2) { return b1.size() < b2.size(); })->size();
-            cerr << "treewidth: " << tw << endl;
 
-            int THR = 26;
+            if(recDepth <= MAX_REC_DEPTH_LOG + 1){
+                logSpacing(); cerr << "treewidth: " << tw << endl;
+            }
+
+//            bool testPreprocess = false;
+//            if(testPreprocess){
+//                ofstream str( "temp.cnf" );
+//
+//                unordered_set<int> clausesToWrite;
+//                for( int v : g.nodes ){
+//                    for( int c : inClauses[v+1] ) clausesToWrite.insert(c);
+//                }
+//
+//                str << "p cnf " << vars << " " << clausesToWrite.size() << endl;
+//                for( int i : clausesToWrite ){
+//                    if( !clauses[i].empty() ){
+//                        for( int d : clauses[i] ) str << d << " ";
+//                        str << 0 << endl;
+//                    }
+//                }
+//
+//                cerr << "Component of size " << cmp.size() << " written to temp.cnf" << endl;
+//                exit(1);
+//            }
+
+
+
+            int THR = 24;
             if( tw > THR ){
-                return -1; // try to find value using DualDecompotition
+//                return -1; // try to find value using DualDecompotition
+                auto res = getBranchedResultForComponent(g,decomp, 2);
+                return res;
 
-//                return getBranchedResultForComponent(g,decomp, min(tw - THR,3));
 //                return getBranchedResultForComponent(g,decomp, tw - THR);
             }
 
@@ -573,9 +1005,6 @@ namespace MC20{
                         if (mask & (1ll << j)) mappedMask |= (1ll << ind[j]);
                     }
 
-//                DEBUG(mask);
-//                DEBUG(mappedMask);
-//                DEBUG( (mappedMask | (1<<ind2[p])) );
                     DP[num][i] += DP[son][mappedMask] + DP[son][mappedMask | (1ll << ind2P)];
                 }
                 if (debug) {
@@ -603,6 +1032,8 @@ namespace MC20{
                     cerr << "updating introduce node, num = " << num << "    bag = " << bags[num] << "    introduces: "
                          << niceDecomp.introduces[num] << endl;
 
+
+
                 int B = bags[num].size();
                 int son = niceDecomp.sons[num][0];
 
@@ -621,11 +1052,12 @@ namespace MC20{
 
 
                 { // test using gray codes
-//                VI falsyLiteralsInClause(cls.size(),0);
                     VI falsyLiteralsInClause(cls, 0);
                     int falsifiedClauses = 0;
 
-                    auto fun = [=,&bags, &falsyLiteralsInClause, &DP, &getValueForSon, &num, &son, &ind, &falsifiedClauses, &B](
+                    int mappedMask = 0; // #TEST
+
+                    auto fun = [=,&bags, &falsyLiteralsInClause, &DP, &getValueForSon, &num, &son, &ind, &falsifiedClauses, &B, &mappedMask](
                             LL mask, int bit) {
 
 
@@ -633,11 +1065,9 @@ namespace MC20{
                             if (debug) cerr << "Initial mask: " << mask << " bit = " << bit << endl;
 
                             for (int b : bags[num]) {
-//                            for( int c : inClauses[b] ){
                                 for (PII c : inClausesSign[b]) {
                                     if (c.second == -1) continue;
 
-//                                if( clauses[c].count(b) ){
                                     if (c.second == 1) {
                                         falsyLiteralsInClause[c.first]++;
                                         if (falsyLiteralsInClause[c.first] == clauses[c.first].size()) {
@@ -648,10 +1078,15 @@ namespace MC20{
                                     }
                                 }
                             }
+
+
                         } else {
+
 
                             int b = bags[num][bit];
                             bool added = ((mask & (1ll << bit)) != 0); // true if bit was added, false otherwise
+
+                            if( ind[bit] != -1 ) mappedMask ^= (1ll << ind[bit]); // #TEST if bags[num][bit] is not an introduce node, then we remap
 
                             if (debug) {
                                 cerr << "mask: ";
@@ -688,7 +1123,8 @@ namespace MC20{
                         if (falsifiedClauses > 0) {
                             DP[num][mask] = 0;
                         } else {
-                            DP[num][mask] = getValueForSon(num, son, mask, ind);
+//                            DP[num][mask] = getValueForSon(num, son, mask, ind);
+                            DP[num][mask] = value(son, mappedMask); // #TEST
                         }
                     };
 
@@ -705,14 +1141,19 @@ namespace MC20{
 
 
             function<void(int num, int par)> dp =
-                    [&tree, &bags, &niceDecomp, &dp, &updateForgetNode, &updateIntroduceNode, &updateJoinNode, &DP](
+                    [=,&tree, &bags, &niceDecomp, &dp, &updateForgetNode, &updateIntroduceNode, &updateJoinNode, &DP](
                             int num, int par) {
 
-                        if (debug) cerr << "\rdp, num = " << num << "  par = " << par << endl;
 
                         for (int d : tree[num]) {
                             if (d != par) dp(d, num);
                         }
+
+                        if (debug) cerr << "\rdp, num = " << num << "  par = " << par << "  bags[num].size() = " << bags[num].size() << endl;
+
+                        sort( ALL(bags[num]), [=](int a, int b){
+                            return inClausesSign[a].size() < inClausesSign[b].size();
+                        } );
 
                         if (niceDecomp.introduces[num] != -1) updateIntroduceNode(num);
                         else if (niceDecomp.forgets[num] != -1) updateForgetNode(num);
@@ -730,6 +1171,8 @@ namespace MC20{
             dp(root, root);
             auto res = DP[root][0];
 
+            addToStates( cmpClauses,res ); // adding, to put it to the back of the queue
+
             return res;
         }
 
@@ -740,18 +1183,23 @@ namespace MC20{
 
             sort(ALL(comps), [](VI &v1, VI &v2) { return v1.size() < v2.size(); });
 
-            {
-                cerr << "Component sizes: ";
-                for (VI cmp : comps) cerr << cmp.size() << " ";
-                cerr << endl;
-            }
+
+
+            /* {
+                 logSpacing();
+                 cerr << "Component sizes: ";
+                 for (VI cmp : comps) cerr << cmp.size() << " ";
+                 cerr << endl;
+             }*/
 
             for (VI &cmp : comps) {
+//                cerr << "compSize " << cmp.size() << endl;
                 auto compResult = getResultForComponent(cmp);
 
                 if( compResult == -1 ) return -1;
 
                 res *= compResult;
+
                 if (compResult == big_integer(0)) break;
             }
 
@@ -829,7 +1277,7 @@ namespace MC20{
 
             int tw = max_element(ALL(bags), [](VI &b1, VI &b2) { return b1.size() < b2.size(); })->size();
             cerr << "treewidth: " << tw << endl;
-            if(tw > 26) return -1;
+            if(tw > 28) return -1;
 
             if (debug) {
                 DEBUG(cmp);
@@ -843,6 +1291,7 @@ namespace MC20{
             struct DualDP : public TreewidthDP{
                 DualDP(VVI& V) : TreewidthDP(V){}
                 DualDP(NiceTreewidthDecomposition & decomp) : TreewidthDP(decomp){}
+//                ~DualDP(){}
                 typedef vector<big_integer> VBI;
                 typedef vector<VBI> VVBI;
 
@@ -883,6 +1332,28 @@ namespace MC20{
                         DEBUG(sonVars);
                     }
 
+
+                    /* if( bags[son].empty() ){
+                         cerr << "son is a leaf" << endl;
+                         if( mask == 0 ){
+ //                            if( debug ) DEBUG(DP[son][mappedMask]);
+                             DP[num][mask] = 0; // empty set in unfalsifiable
+                         }
+                         else {
+                             int power = 0;
+                             for (int v : bagVars) if (AVars.count(v) == 0) power++;
+                             if(debug) DEBUG(power);
+                             big_integer res = 1;
+                             if (power > 0) res = StandardUtils::binaryPower(big_integer(2), power);
+                             DP[num][mask] = res;
+                         }
+ //                        if( debug ) DEBUG(DP[son][mappedMask]);
+                         if(debug) DEBUG(DP[num][mask]);
+                         return;
+                     }*/
+
+
+//                    bool isFalsifiable = ( mask > 0 );
                     bool isUnfalsifiable = false; // #TEST probably this is the right one
 
                     for (PII p : ALiterals) {
@@ -989,12 +1460,14 @@ namespace MC20{
 
                 }
 
-               big_integer countModels(int num){
+                big_integer countModels(int num){
+//                    cerr << "Counting number of models for subtree with node in " << num << endl;
                     big_integer cnt = 0;
                     int B = bags[num].size();
                     for( int A = 0; A < (1ll<<B); A++ ){
                         cnt += DP[num][A] * ( __builtin_popcount(A) % 2 == 0 ? 1 : -1 );
                     }
+//                    cerr << "There are " << cnt << " models" << endl << endl;
                     return cnt;
                 }
 
@@ -1016,6 +1489,9 @@ namespace MC20{
                         DEBUG(DP[son][ mappedMask | ( 1ll << forgetNodeIndex ) ]);
                     }
                     DP[num][mask] = DP[son][mappedMask] - DP[son][ mappedMask | ( 1ll << forgetNodeIndex ) ];
+
+
+//                    exit(1);
 
                 }
 
@@ -1099,6 +1575,7 @@ namespace MC20{
                     const bool debug = true;
                     if( bitChanged != -1 ){
                         int c = bags[num][bitChanged];
+//                        cerr << "updating AVars and ALiterals, c = " << c << "  clauses[c]: " << clauses[c] << endl;
                         bool bitAdded = ( mask & (1ll << bitChanged) ) != 0;
 
                         if(bitAdded){
@@ -1117,6 +1594,11 @@ namespace MC20{
                             }
                         }
 
+//                        if(debug){
+//                            DEBUG(bitAdded);
+//                            DEBUG(bagVars);
+//                            DEBUG(AVars);
+//                        }
                     }
                 }
 
@@ -1125,6 +1607,7 @@ namespace MC20{
                     for( int c : bags[num] ){
                         for( int v : clauses[c] ) bagVars.insert( abs(v) );
                     }
+//                    if(debug) cerr << "in create bagVars, num = " << num << "  bags[num] = " << bags[num] << "  bagVars: " << bagVars << endl;
                 }
 
                 void initIntroduceNode(int num) override {
@@ -1140,7 +1623,7 @@ namespace MC20{
                 }
 
                 void initForgetNode(int num) override {
-
+//                    createBagVars(num);
                 }
 
                 void initJoinNode(int num) override {
@@ -1171,11 +1654,11 @@ namespace MC20{
             sort(ALL(comps), [](VI &v1, VI &v2) { return v1.size() < v2.size(); });
 
 
-            {
-                cerr << "Component sizes: ";
-                for (VI cmp : comps) cerr << cmp.size() << " ";
-                cerr << endl;
-            }
+//            {
+//                cerr << "Component sizes: ";
+//                for (VI cmp : comps) cerr << cmp.size() << " ";
+//                cerr << endl;
+//            }
 
             for (VI &cmp : comps) {
                 auto compResult = getResultForComponent(cmp);
@@ -1189,45 +1672,46 @@ namespace MC20{
     }
 
     void run(){
-        bool multipleTests = false;
-        bool generate = false;
-        bool bruteForceTest = false;
+//        ifstream f( "test006.cnf" ); cin.rdbuf( f.rdbuf() );
+
 
         int REPS = 1;
 
-        if(!generate && multipleTests){
-            cin >> REPS;
-            cin.ignore();
-        }else if(generate){
-//            generateTestCases(REPS);
-            cerr << "Not supported" << endl;
-            return;
-        }
 
         for(int r=0; r<REPS; r++) {
-
-
             read();
 
+            varHashes = vector<Triple>(vars+1);
+//            DEBUG(varHashes); exit(1);
+
+//            {
+//                addToStates( { { 1,2,-3 }, {2,5,-1}, {4,-2,3} }, 7 );
+//                addToStates( { { 1,-2,-3 }, {2,5,-1}, {4,-2,3} }, 7 );
+//
+//                // present values
+//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3, -2} } ) );
+//                DEBUG( extractStateValue( { {5,2,-1}, { 1,-3,2 },  {4,3, -2} } ) );
+//                DEBUG( extractStateValue( { {5,2,-1}, { 1,-3,2 },  {3,4,    -2} } ) );
+//                DEBUG( extractStateValue( { {5,-1,2}, {3,4,    -2}, { -3,1,2 } } ) );
+//                DEBUG( extractStateValue( { {5,-1,2}, {3,4,    -2}, { -3,1,2 }, {} } ) );
+//
+//                // -1
+//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3,    2} } ) );
+//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3, -2}, {0}, {} } ) );
+//
+//                exit(1);
+//            }
 
             DEBUG(vars);
             DEBUG(cls);
 
 
-
-
             big_integer bfres = 0;
-            if (bruteForceTest) {
-                bfres = bruteForce();
-                cerr << "bfres: " << to_string(bfres) << endl;
 
-                cout << "s mc " << to_string(bfres) << endl;
-                continue;
-            }
 
 
             cerr << "Creating primal graph" << endl;
-            Primal prim( clauses, inClauses, cls, vars );
+            Primal prim( clauses, inClauses, cls, vars,0 );
             prim.preprocess();
             prim.createGraph();
             auto res = prim.getResult();
@@ -1238,10 +1722,10 @@ namespace MC20{
                 cerr << "Creating dual graph" << endl;
                 Dual::createGraph();
                 auto res = Dual::getResult();
-                /*if( res != -1 ) */result = res;
+                result = res;
             }
 
-            DEBUG("s mc " + to_string(result));
+//            DEBUG("s mc " + to_string(result));
             cout << "s mc " << to_string(result) << endl;
 
         }
@@ -1307,6 +1791,22 @@ p cnf 5 7
 3 -5 -1 0
 1 -4 3 0
 4 2 5 0
+
+
+
+p cnf 9 12
+6 1 0
+6 -2 0
+1 3 0
+2 -3 0
+2 4 0
+-4 -5 0
+-3 -5 0
+-7 6 0
+7 -8 0
+8 -2 0
+8 9 0
+9 4 0
 
 
  */

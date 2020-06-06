@@ -253,9 +253,9 @@ struct TREEWIDTH {
                     int prevTW = extractTW();
 //                    DEBUG(prevTW);
 
-                        cerr << endl;
+//                        cerr << endl;
                     for (int i = 0;; ++i) {
-                        cerr << "\rcnt: " << cnt << flush;
+//                        cerr << "\rcnt: " << cnt << flush;
 
 
 
