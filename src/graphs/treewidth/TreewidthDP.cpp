@@ -134,7 +134,7 @@ void TreewidthDP::updateIntroduceNode(int num) {
 
 void TreewidthDP::updateForgetNode(int num) {
     initForgetNode(num);
-    enumerateSubsets( num, introduceEnumerationType,
+    enumerateSubsets( num, forgetEnumerationType,
                       [=]( int num, bitmask mask, bitmask mappedMask, int bitChanged ){
                           processForgetNodeMask(num, mask, mappedMask,bitChanged);
                       } );
@@ -143,7 +143,7 @@ void TreewidthDP::updateForgetNode(int num) {
 
 void TreewidthDP::updateJoinNode(int num) {
     initJoinNode(num);
-    enumerateSubsets( num, introduceEnumerationType,
+    enumerateSubsets( num, joinEnumerationType,
                       [=]( int num, bitmask mask, bitmask mappedMask, int bitChanged ){
                           processJoinNodeMask(num, mask, mappedMask,bitChanged);
                       } );
