@@ -10,7 +10,7 @@ Algorithm tries to find solution based on decomposition of primal graph. Each co
 
 Dynamic programming on decomposition of dual graph is also implemented, but it is not used (it occurs to be much slower than for primal graphs).<br>
 
-Treewidth is found using flow cutter algorithm ([link here](https://github.com/ben-strasser/flow-cutter-pace16)).
+Treewidth is found using FlowCutter algorithm ([link here](https://github.com/ben-strasser/flow-cutter-pace16)).
 
 <br>
 
