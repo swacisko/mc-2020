@@ -4,7 +4,6 @@
 
 #include <datastructures/InfInt.h>
 #include <graphs/treewidth/TreewidthDP.h>
-//#include <CONTESTS/PACE20/Pace20Params.h>
 #include "CONTESTS/MC20/mc20.h"
 #include "graphs/components/ConnectedComponents.h"
 #include "graphs/GraphInducer.h"
@@ -13,7 +12,6 @@
 #include "graphs/GraphUtils.h"
 #include "utils/RandomNumberGenerators.h"
 #include "combinatorics/GrayCode.h"
-//#include "combinatorics/CombinatoricUtils.h"
 typedef InfInt big_integer;
 
 string to_string(big_integer g){ return g.toString(); }
@@ -39,7 +37,7 @@ ostream& operator<<(ostream& str, Triple& t){
 }
 UniformIntGenerator Triple::gen( 0ll, 1ll << 60 );
 
-const int MAX_REC_DEPTH_LOG = 0;
+const int MAX_REC_DEPTH_LOG = 5;
 
 namespace MC20{
 
@@ -226,6 +224,7 @@ namespace MC20{
         Primal( vector< unordered_set<int> >& clauses, vector< unordered_set<int> >& inClauses, int cls, int vars, int recDepth ){
             this->clauses = clauses;
             this->inClauses = inClauses;
+//            inClauses = vector<unordered_set<int>>(vars+1); for( int i=0; i<cls; i++ ) for( int v : clauses[i] ) inClauses[abs(v)].insert(i);
             varSetValue = VB(vars + 1, false);
             this->vars = vars;
             this->cls = cls;
@@ -247,7 +246,237 @@ namespace MC20{
         int vars; // number of variables
         big_integer result;
 
+
+        // returns variables sorted  in such a way, that the treewidth after branching on first variable is minimal (maximal treewidth from two choices v and ~v)
+        VI getVarsReducingTreewidth( InducedGraph & g, TreewidthDecomposition & decomp ){
+            const bool debug = false;
+
+            logSpacing(); cerr << "checking vars-reducing" << endl;
+
+            vector< pair<PII,int> > trwAfter;
+
+            int T = decomp.getStructure().size();
+            VVI bags = decomp.getBags();
+            VVI inBags(vars+1);
+
+            if(debug){
+                DEBUG(*decomp.getV());
+                DEBUG(T);
+                DEBUG(g.V.size());
+                DEBUG(g.V);
+                DEBUG(*g.par);
+                DEBUG(bags.size());
+                DEBUG(decomp.getStructure());
+                DEBUG(bags);
+            }
+
+//            for(VI& b : bags) for(  int& d : b) d = 1 + g.nodes[d]; // #TEST
+//            DEBUG(bags);
+
+            for( int i=0; i<T; i++ ) for( int b : bags[i] ){
+//                inBags[ 1 + g.nodes[b] ].push_back(i);
+//                inBags[1+b].push_back(i);
+                inBags[b].push_back(i);
+            }
+
+//            DEBUG(inBags);
+
+            VI bagsSizes(T,0);
+            for(int i=0; i<T; i++) bagsSizes[i] = bags[i].size();
+
+            unordered_set<int> temp;
+            for (int v : g.nodes) {
+                for (int c : inClauses[v + 1]) temp.insert(c);
+            }
+            vector<unordered_set<int>> cmpClauses;
+            for (int c : temp) cmpClauses.push_back(clauses[c]);
+
+//            DEBUG(cmpClauses);
+
+            vector<unordered_set<int>> cmpInClauses(vars+1);
+            for(int i=0; i<cmpClauses.size(); i++) for( int d : cmpClauses[i] ) cmpInClauses[abs(d)].insert(i);
+
+            auto testVar = [=,&g, &decomp, &bagsSizes, &cmpClauses, &cmpInClauses, &inBags](int v){
+                auto newClauses = cmpClauses;
+                auto newInClauses = cmpInClauses;
+                newClauses.push_back( {v} );
+                newInClauses[ v ].insert( newClauses.size()-1 );
+
+//                DEBUG(newClauses);
+//                DEBUG(newInClauses);
+
+                Primal prim(newClauses, newInClauses, newClauses.size(),vars,recDepth+1);
+                prim.preprocess();
+
+                VI remVars;
+                VI newBagsSizes = bagsSizes;
+                for(int i=1; i<=vars; i++){
+                    if( prim.inClauses[i].empty() && !newInClauses[i].empty() ){ // variable i was set
+//                        cerr << "\tvariable " << i << "was set" << endl;
+                        for(int b : inBags[i]){
+                            newBagsSizes[b]--;
+//                            cerr << "\tremoving variable " << i << " from bag " << b << endl;
+                        }
+                    }else if( !newInClauses[i].empty() ){
+                        remVars.push_back(i);
+                    }
+                }
+
+                int res = 0;
+                if(prim.result>0) for(int b : newBagsSizes) res = max(res,b);
+                else if(debug) cerr << "\tprim.result == 0" << endl;
+
+                if(res == 0) return PII(-1,0);
+
+                if(debug)cerr << "treewidth after setting " << v << " to true: " << res << endl;
+
+
+//                if( !remVars.empty() && prim.result > 0 ){ // #TEST
+////                    DEBUG(remVars);
+//                    for(int& d : remVars) d--;
+//                    prim.createGraph();
+//                    InducedGraph gRes = GraphInducer::induce( *g.par, remVars );
+////                    DEBUG(gRes.V);
+//                    TreewidthDecomposition indDec = getInducedDecomposition( gRes,decomp );
+////                    DEBUG(newBagsSizes);
+////                    for( VI b : indDec.getBags() ) cerr << b.size() << " ";
+////                    cerr << endl;
+////                    DEBUG(indDec.getWidth());
+//                    assert( indDec.getWidth() == res );
+//
+//                }
+
+                newClauses.back() = {-v};
+
+
+                prim = Primal(newClauses, newInClauses, newClauses.size(),vars,recDepth+1);
+                prim.preprocess();
+
+                remVars.clear();
+                newBagsSizes = bagsSizes;
+                for(int i=1; i<=vars; i++){
+                    if( prim.inClauses[i].empty() && !newInClauses[i].empty() ){ // variable i was set
+                        for(int b : inBags[i]) newBagsSizes[b]--;
+                    }else if( !newInClauses[i].empty() ){
+                        remVars.push_back(i);
+                    }
+                }
+
+
+
+                int res2 = 0;
+                if(prim.result>0) for(int b : newBagsSizes) res2 = max(res2,b);
+                else if(debug) cerr << "\tprim.result == 0" << endl;
+
+//                if( !remVars.empty() && prim.result > 0 ){ // #TEST
+////                    DEBUG(remVars);
+//                    for(int& d : remVars) d--;
+//                    prim.createGraph();
+//                    InducedGraph gRes = GraphInducer::induce( *g.par, remVars );
+//                    TreewidthDecomposition indDec = getInducedDecomposition( gRes,decomp );
+////                    DEBUG(newBagsSizes);
+////                    for( VI b : indDec.getBags() ) cerr << b.size() << " ";
+////                    cerr << endl;
+////                    DEBUG(indDec.getWidth());
+//                    assert( indDec.getWidth() == res2 );
+//                }
+
+                if(debug){
+                    cerr << "treewidth after setting " << v << " to false: " << res2 << endl;
+                    ENDL(1);
+                }
+
+//                return max(res,res2);
+                return PII(res2,res);
+            };
+
+
+//            DEBUG(g.nodes);
+//            DEBUG(inClauses);
+//            DEBUG(clauses);
+
+            unordered_set<int> nodesToCheck;
+            {
+                for (int v : g.nodes) { // adding variables that are in binary clauses
+                    for (int c : inClauses[v + 1]) {
+                        if (clauses[c].size() == 2) {
+                            nodesToCheck.insert(v);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            { // adding variables that are in largest bags
+                int width = decomp.getWidth();
+                for( VI& b : bags ) if( b.size() == width ){
+                    for(int d : b) nodesToCheck.insert(d-1);
+                }
+            }
+
+            { // adding variables that have greatest degree in g.V
+                int D = max_element( ALL(g.V), []( VI &a, VI &b ){ return a.size() < b.size(); } )->size();
+                for(int i=0; i<g.V.size(); i++) if( g.V[i].size() == D ){
+                    for( int b : inBags[ 1 + g.nodes[i] ] ) for( int d : bags[b] )   nodesToCheck.insert( d-1 );
+                }
+
+            }
+
+
+//            for( int v : g.nodes ){
+            for( int v : nodesToCheck ){
+                v++;
+                if(debug)cerr << "Testing branching on variable " << v << endl;
+                PII trw = testVar(v);
+
+                if( trw.first == 0 || trw.second == 0 ) {
+                    logSpacing(); cerr << "trivial branching, returning trw: " << trw << endl;
+                    return {v}; // if one assignment is trivial, then do not check other variables, just branch!
+                }
+                if(debug)cerr << "trw(" << v << ") = " << trw << endl;
+                trwAfter.push_back( {trw,v} );
+            }
+
+//            exit(1);
+
+            VI sq(vars+1,0);
+            for( auto p : trwAfter ){
+                for( int b : inBags[p.second] ) sq[p.second] += bags[b].size() * bags[b].size();
+            }
+
+            sort( ALL(trwAfter), [&sq]( auto p, auto q ){
+                if( p.first.first*p.first.first + p.first.second*p.first.second != q.first.first*q.first.first + q.first.second*q.first.second ){
+                    return p.first.first*p.first.first + p.first.second*p.first.second < q.first.first*q.first.first + q.first.second*q.first.second;
+                }else return sq[p.second] > sq[q.second];
+            } );
+
+            logSpacing(); DEBUG(trwAfter[0]);
+            if(debug)DEBUG(trwAfter);
+
+            VI res;
+            for(auto p : trwAfter) res.push_back(p.second);
+
+//            exit(1);
+
+            return res;
+        }
+
+
         void preprocess(){
+
+            for( int i=0; i<cls; i++ ) { // this needs to be done just once, not in every iteration
+                { // test new try
+                    for (int d : clauses[i]) {
+                        if (clauses[i].count(-d)) {
+//                                cerr << "Clearing clause " << i << ": " << clauses[i] << " due to variables : " << d << " and " << -d << endl;
+                            for( int d : clauses[i] ) inClauses[ abs(d) ].erase(i);
+                            clauses[i].clear();
+                            break;
+                        }
+                    }
+                }
+            }
+
             bool changesDone = true;
             while(changesDone){
                 if(result == 0) break;
@@ -256,30 +485,7 @@ namespace MC20{
 //                cerr << endl << " NEXT PREPROCESSING ITERATION!" << endl << endl;
 
 
-                for( int i=0; i<cls; i++ ) { // this needs to be done just once, not in every iteration
-                    /*set<int> toRemove;
-                    for (int d : clauses[i]) {
-                        if (clauses[i].count(-d)) {
-    //                            cerr << "clause " << i << " contains " << d << " and " << -d << endl;
-
-                            // below we get the case     -1 0  ...   1 -1 0     ...  - we do not multiply by 2 since clause -1 forces false assignment
-                            bool t = false;
-                            for( int c : inClauses[ abs(d) ] ) if( clauses[c].count(d) && clauses[c].size() == 1 ) t = true;
-                            if(t) continue;
-
-                            if (inClauses[abs(d)].size() == 1) {
-                                toRemove.insert(abs(d));
-                            }
-                        }
-                    }
-                    for (int d : toRemove) {
-                        cerr << "Removing " << d << " and " << -d << " from clause " << i << ": " << clauses[i] << endl;
-                        clauses[i].erase(d);
-                        clauses[i].erase(-d);
-                        inClauses[d].clear();
-                        if (clauses[i].empty()) result *= 2;
-                    }*/
-
+                /*for( int i=0; i<cls; i++ ) { // this needs to be done just once, not in every iteration
                     { // test new try
                         for (int d : clauses[i]) {
                             if (clauses[i].count(-d)) {
@@ -290,9 +496,18 @@ namespace MC20{
                             }
                         }
                     }
-                }
+                }*/
 
-                for( int i=0; i<cls; i++ ){
+
+//                for( int i=0; i<cls; i++ ){
+
+                VI modified(cls,0);
+                VB valid(cls,true);
+                iota(ALL(modified),0);
+                for( int j=0; j<modified.size(); j++ ){ // #TEST
+                    int i = modified[j];
+                    if(!valid[i]) continue;
+                    valid[i] = false;
 
                     if(result == 0) break;
 
@@ -331,6 +546,9 @@ namespace MC20{
 //                                bool add = inClauses[d].size() > 0;
                                 inClauses[d].erase(c);
 //                                if (inClauses[d].empty() && add) result *= 2;
+
+                                modified.push_back(c); // #TEST
+                                valid[c] = true;
                             }
                         }
 
@@ -349,6 +567,9 @@ namespace MC20{
                             }
                             clauses[c.first].clear();
                             inClauses[c.second].erase(c.first);
+
+                            modified.push_back(c.first); // #TEST
+                            valid[c.first] = true;
                         }
 
 //                        cerr << endl;
@@ -356,6 +577,8 @@ namespace MC20{
 
 
                 }
+
+                changesDone = false; // #TEST for modified vector
 
             }
 
@@ -485,28 +708,6 @@ namespace MC20{
             if (debug)DEBUG(comps);
             for (int i = (int) comps.size() - 1; i >= 0; i--) {
                 if (comps[i].size() == 1) {
-                    int isolated = comps[i][0] + 1;
-
-                    /* VI toRemove;
-                     for (int d : inClauses[isolated]) {
-                         if (clauses[d].size() <= 2) {
-                             if (debug)
-                                 cerr << "\tClearing component " << comps[i] << "  with occurence in clause "
-                                      << clauses[d] << endl;
- //                        clauses[d].clear();
-                             toRemove.push_back(d);
- //                        DEBUG( V[ isolated ] );
- //                        exit(1);
-                         }
-
-                     }
-
-                     for (int d : toRemove) {
-                         cerr << "anything at all" << endl;
-                         if (clauses[d].size() == 2) result *= 2;
-                         inClauses[isolated].erase(d);
-                     }*/
-
 
                     swap(comps[i], comps.back());
                     comps.pop_back();
@@ -522,29 +723,16 @@ namespace MC20{
 
         big_integer getBranchedResultForComponent( InducedGraph& g, TreewidthDecomposition& decomp, int depth ){
             const bool debug = false;
-//            InducedGraph g = GraphInducer::induce(V, cmp);
-//            TREEWIDTH trw;
-//            volatile sig_atomic_t tle = 0;
-//            TreewidthDecomposition decomp = trw.main(g.V, 20, tle); // just for test, better make it 100 for
-//            assert(decomp.isCorrect());
+
+
+
+
             VVI tree = decomp.getStructure();
             VVI bags = decomp.getBags();
             for( VI& b : bags ) for(int& d : b) d = 1 + g.nodes[d];
 
-            if(debug){
-                DEBUG(bags.size());
-//                DEBUG(bags);
-//                cerr << "non-empty clauses containing some node from bags:" << endl;
-//                for( int i=0; i<cls; i++ ){
-//                    for( int v : g.nodes ){
-//                        if( clauses[i].count(v) ) {
-////                            cerr << "clasues[" << i << "]: " << clauses[i] << endl;
-////                            break;
-//                        }
-//                    }
-//                }
 
-            }
+//            cerr << "in getBranchedResult, bags = " << bags << endl;
 
             VI branchingNodes;
 
@@ -558,8 +746,21 @@ namespace MC20{
 
             VI squares(vars+1,0);
 
+            bool useVarsReducing = true;
+//            bool useVarsReducing = ( recDepth%2 == 0 );
+
+            if(useVarsReducing){
+                auto newDecomp = decomp;
+                for( VI& bg : newDecomp.getBags() ) for( int& d : bg ) d = 1 + g.nodes[d]; // #TEST
+//                for( VI& bg : decomp.getBags() ) for( int& d : bg ) d = g.nodes[d]; // #TEST
+                auto varsRed = getVarsReducingTreewidth(g,newDecomp);
+                depth = 1;
+                branchingNodes = { varsRed[0] };
+            }
+
             bool useSmallestClauses = true;
-            bool useLargestBags = true;
+            bool useLargestBags = true; // #TEST;
+            if(useVarsReducing) useSmallestClauses = useLargestBags = false;
 
             if( useLargestBags && useSmallestClauses ) depth >>= 1;
 
@@ -608,20 +809,20 @@ namespace MC20{
 //                    exit(1);
             }
 
-            /* { // greatest degree in g.V
-                 VI nd(g.V.size());
-                 iota(ALL(nd),0);
-                 sort( ALL(nd), [=,&g](int a, int b){
-                     if( g.V[a].size() != g.V[b].size() ) return g.V[a].size() > g.V[b].size();
-                     else if(inClauses[a].size() != inClauses[b].size()) return inClauses[a].size() > inClauses[b].size();
-                     else return a > b;
-                 } );
-                 for(int i=0; i<depth; i++){
-                     int b = g.nodes[ nd[i] ];
-                     branchingNodes.push_back( b );
-                     cerr << "Adding node " << b << " with g.V degree: " << g.V[nd[i]].size() << " and inClauses.size(): " << inClauses[b].size() << endl;
-                 }
-             }*/
+//             { // greatest degree in g.V
+//                 VI nd(g.V.size());
+//                 iota(ALL(nd),0);
+//                 sort( ALL(nd), [=,&g](int a, int b){
+//                     if( g.V[a].size() != g.V[b].size() ) return g.V[a].size() > g.V[b].size();
+//                     else if(inClauses[a].size() != inClauses[b].size()) return inClauses[a].size() > inClauses[b].size();
+//                     else return a > b;
+//                 } );
+//                 for(int i=0; i<depth; i++){
+//                     int b = 1 + g.nodes[ nd[i] ];
+//                     branchingNodes.push_back( b );
+//                     cerr << "Adding node " << b << " with g.V degree: " << g.V[nd[i]].size() << " and inClauses.size(): " << inClauses[b].size() << endl;
+//                 }
+//             }
 
 
 
@@ -678,14 +879,6 @@ namespace MC20{
 
 
 
-
-
-
-
-//            { // #TEST selecting branching nodes as those that occur in clauses with small number of variables
-//                branchingNodes.clear();
-//                VI v(ALL(presVars));
-//            }
 
             if(debug){
                 DEBUG(branchingNodes);
@@ -813,7 +1006,25 @@ namespace MC20{
                     }
 
 //                    cerr << "getResult" << endl;
-                    auto satRes = prim.getResult();
+//                    auto satRes = prim.getResult();
+
+
+//                        auto dec = decomp;
+//                        for( VI& bg : dec.getBags() ) for( int& d : bg ) d = g.nodes[d];
+//                        auto satRes = prim.getResult(&dec); // #TEST
+
+                        VI remVars;
+                        for( int i=0; i<prim.V.size(); i++ ) if( !prim.V[i].empty() ) remVars.push_back(i);
+//                        DEBUG(remVars);
+                        auto gInd = GraphInducer::induce( prim.V, remVars );
+                        auto newDecomp = decomp;
+                        for( VI& bg : newDecomp.getBags() ) for( int& d : bg ) d = 1 + g.nodes[d]; // #TEST
+                        auto indDec = getInducedDecomposition(gInd, newDecomp);
+
+                        for( VI& bg : indDec.getBags() ) for(int& d : bg) d = 1 + gInd.nodes[d]; // #TEST
+
+                        auto satRes = prim.getResult(&indDec); // #TEST
+
 
 //                        addToStates(prim.clauses, satRes);
 
@@ -844,10 +1055,73 @@ namespace MC20{
             return res;
         }
 
-
-        big_integer getResultForComponent(VI cmp, int tw_iters = 15) {
+        TreewidthDecomposition getInducedDecomposition( InducedGraph& g, TreewidthDecomposition& decomp ){
             const bool debug = false;
 
+            VVI tree = decomp.getStructure();
+            int T = tree.size();
+            VVI bags = decomp.getBags();
+
+            unordered_set<int> treeInducer;
+            for( int i=0; i<T; i++ ){
+                for(int b : bags[i]){
+                    b--; // #TEST decreasing to vertex id, from variable id
+                    if( g.perm.find(b) != g.perm.end() ) treeInducer.insert(i);
+                }
+            }
+
+            if(debug) {
+                DEBUG(*g.par);
+                DEBUG(*decomp.getV());
+                DEBUG(tree);
+                DEBUG(bags);
+                DEBUG(g.V);
+                DEBUG(g.nodes);
+                DEBUG(g.perm);
+            }
+
+
+            VI inducer(ALL(treeInducer));
+//            sort(ALL(inducer));
+            if(debug)DEBUG(inducer);
+
+            InducedGraph gTree = GraphInducer::induce( tree, inducer );
+
+            if(debug) {
+                DEBUG(gTree.V);
+                DEBUG(gTree.perm);
+                DEBUG(gTree.nodes);
+            }
+
+            VVI inducedBags( gTree.V.size() );
+
+            VVI newBags( bags.size() );
+            for( int i=0; i<T; i++ ){
+                for( int b : bags[i] ){
+                    b--; // #TEST decreasing to vertex id, from variable id
+                    if( g.perm.find(b) != g.perm.end() ) newBags[i].push_back( g.perm[b] );
+                }
+            }
+
+            if(debug)DEBUG(newBags);
+
+            for( int i=0; i<T; i++ ){
+                if( gTree.perm.find(i) != gTree.perm.end() ){
+                    inducedBags[ gTree.perm[i] ] = newBags[i];
+                }
+            }
+
+            if(debug)DEBUG(inducedBags);
+
+            TreewidthDecomposition res( g.V, gTree.V, inducedBags );
+            assert(res.isCorrect());
+            return res;
+        }
+
+        big_integer getResultForComponent(VI cmp, int tw_iters = 8, TreewidthDecomposition* vDecomp = nullptr) {
+            const bool debug = false;
+
+//            cerr << "Considering component: " << cmp << endl;
 
             unordered_set<int> temp;
             for (int v : cmp) {
@@ -856,10 +1130,8 @@ namespace MC20{
             vector<unordered_set<int>> cmpClauses;
             for (int c : temp) cmpClauses.push_back(clauses[c]);
             auto stateValue = extractStateValue(cmpClauses);
-//            auto stateValue = -1;
             if (stateValue != -1) {
 //                logSpacing();  cerr << "EXTRACTING CACHED STATE VALUE 1 !" << endl;
-//                addToStates(cmpClauses, stateValue); // adding, to put it to the back of the queue
                 return stateValue;
             }
 
@@ -869,49 +1141,64 @@ namespace MC20{
             TREEWIDTH trw;
             volatile sig_atomic_t tle = 0;
 //            logSpacing();
-            TreewidthDecomposition decomp = trw.main(g.V, tw_iters, tle); // just for test, better make it 100 for
-            assert(decomp.isCorrect());
 
+                // the lines below check for treewidth in each iteration
+
+
+            TreewidthDecomposition decomp = trw.main(g.V, tw_iters, tle);
+            assert(decomp.isCorrect());
             VVI tree = decomp.getStructure();
             VVI bags = decomp.getBags();
-
-
             int tw = max_element(ALL(bags), [](VI &b1, VI &b2) { return b1.size() < b2.size(); })->size();
+
+
+
+            // the lines below do not check for treewidth in each iterations, they always take induced treewidth if possible
+//            TreewidthDecomposition decomp(g.V,{},{});
+//            int tw;
+//            if( vDecomp == nullptr ){
+//                decomp = trw.main(g.V, tw_iters, tle); // just for test, better make it 100 for
+//                VVI bags = decomp.getBags();
+//                tw = max_element(ALL(bags), [](VI &b1, VI &b2) { return b1.size() < b2.size(); })->size();
+//            }
+//            else tw = 1e7; // #TEST
+
+
+
+
+            if( vDecomp != nullptr ){
+                auto inducedDecomp = getInducedDecomposition(g,*vDecomp);
+
+//                auto newDecomp = *vDecomp;
+//                DEBUG(vDecomp->getBags());
+//                for( VI& bg : newDecomp.getBags() ) for( int& d : bg ) d = 1 + g.nodes[d]; // #TEST
+//                auto inducedDecomp = getInducedDecomposition(g,newDecomp);
+
+                VVI bags2 = inducedDecomp.getBags();
+                int tw2 = max_element(ALL(bags2), [](VI &b1, VI &b2) { return b1.size() < b2.size(); })->size();
+//                logSpacing(); DEBUG(tw2);
+                if( tw2 < tw ){
+                    logSpacing(); cerr << "induced decomposition is better! "; cerr << "tw2 = " << tw2 << " < " << tw << " = tw" << endl;
+                    decomp = inducedDecomp;
+                    tw = tw2;
+
+                }
+            }
 
             if(recDepth <= MAX_REC_DEPTH_LOG + 1){
                 logSpacing(); cerr << "treewidth: " << tw << endl;
             }
 
-//            bool testPreprocess = false;
-//            if(testPreprocess){
-//                ofstream str( "temp.cnf" );
-//
-//                unordered_set<int> clausesToWrite;
-//                for( int v : g.nodes ){
-//                    for( int c : inClauses[v+1] ) clausesToWrite.insert(c);
-//                }
-//
-//                str << "p cnf " << vars << " " << clausesToWrite.size() << endl;
-//                for( int i : clausesToWrite ){
-//                    if( !clauses[i].empty() ){
-//                        for( int d : clauses[i] ) str << d << " ";
-//                        str << 0 << endl;
-//                    }
-//                }
-//
-//                cerr << "Component of size " << cmp.size() << " written to temp.cnf" << endl;
-//                exit(1);
-//            }
+            tree = decomp.getStructure(); // #TEST
+            bags = decomp.getBags(); // #TEST
 
 
 
-            int THR = 24;
+            int THR = 23; // #TEST
             if( tw > THR ){
 //                return -1; // try to find value using DualDecompotition
                 auto res = getBranchedResultForComponent(g,decomp, 2);
                 return res;
-
-//                return getBranchedResultForComponent(g,decomp, tw - THR);
             }
 
 
@@ -1047,6 +1334,7 @@ namespace MC20{
                 if (debug)DEBUG(son);
                 if (debug)DEBUG(ind);
 
+                assert( niceDecomp.getWidth() >= B );
 
                 DP[num] = vector<big_integer>(1ll << B, 0);
 
@@ -1055,7 +1343,7 @@ namespace MC20{
                     VI falsyLiteralsInClause(cls, 0);
                     int falsifiedClauses = 0;
 
-                    int mappedMask = 0; // #TEST
+                    int mappedMask = 0;
 
                     auto fun = [=,&bags, &falsyLiteralsInClause, &DP, &getValueForSon, &num, &son, &ind, &falsifiedClauses, &B, &mappedMask](
                             LL mask, int bit) {
@@ -1086,7 +1374,7 @@ namespace MC20{
                             int b = bags[num][bit];
                             bool added = ((mask & (1ll << bit)) != 0); // true if bit was added, false otherwise
 
-                            if( ind[bit] != -1 ) mappedMask ^= (1ll << ind[bit]); // #TEST if bags[num][bit] is not an introduce node, then we remap
+                            if( ind[bit] != -1 ) mappedMask ^= (1ll << ind[bit]);
 
                             if (debug) {
                                 cerr << "mask: ";
@@ -1124,7 +1412,7 @@ namespace MC20{
                             DP[num][mask] = 0;
                         } else {
 //                            DP[num][mask] = getValueForSon(num, son, mask, ind);
-                            DP[num][mask] = value(son, mappedMask); // #TEST
+                            DP[num][mask] = value(son, mappedMask);
                         }
                     };
 
@@ -1139,6 +1427,7 @@ namespace MC20{
                 }
             };
 
+//            cerr << "Starting processing graph with treewidth: " << niceDecomp.getWidth() << endl;
 
             function<void(int num, int par)> dp =
                     [=,&tree, &bags, &niceDecomp, &dp, &updateForgetNode, &updateIntroduceNode, &updateJoinNode, &DP](
@@ -1178,12 +1467,12 @@ namespace MC20{
 
 
 
-        big_integer getResult(){
+        big_integer getResult( TreewidthDecomposition* vDecomp = nullptr ){
             big_integer res = result;
 
             sort(ALL(comps), [](VI &v1, VI &v2) { return v1.size() < v2.size(); });
 
-
+            for(auto& v : comps) sort(ALL(v));
 
             /* {
                  logSpacing();
@@ -1192,9 +1481,17 @@ namespace MC20{
                  cerr << endl;
              }*/
 
+
+//            TREEWIDTH trw;volatile sig_atomic_t tle = 0;
+//            TreewidthDecomposition decomp = trw.main(V, 50, tle); // just for test, better make it 100 for
+
+
             for (VI &cmp : comps) {
 //                cerr << "compSize " << cmp.size() << endl;
-                auto compResult = getResultForComponent(cmp);
+
+
+//                ENDL(3); // #TEST
+                auto compResult = getResultForComponent(cmp,8,vDecomp);
 
                 if( compResult == -1 ) return -1;
 
@@ -1255,8 +1552,7 @@ namespace MC20{
 
             InducedGraph g = GraphInducer::induce( V,cmp );
 
-            TREEWIDTH trw;
-            volatile sig_atomic_t tle = 0;
+            TREEWIDTH trw;volatile sig_atomic_t tle = 0;
             TreewidthDecomposition decomp = trw.main(g.V, 50, tle); // just for test, better make it 100 for
 
             assert(decomp.isCorrect());
@@ -1354,7 +1650,7 @@ namespace MC20{
 
 
 //                    bool isFalsifiable = ( mask > 0 );
-                    bool isUnfalsifiable = false; // #TEST probably this is the right one
+                    bool isUnfalsifiable = false;
 
                     for (PII p : ALiterals) {
                         if (ALiterals.count(-p.first)) { // if literals in A have d and -d, then some clause is set to true, so A is not falsifiable
@@ -1572,7 +1868,7 @@ namespace MC20{
 
                 // update AVars and ALiterals
                 void updateAVars(int num, int bitChanged, bitmask mask){
-                    const bool debug = true;
+                    const bool debug = false;
                     if( bitChanged != -1 ){
                         int c = bags[num][bitChanged];
 //                        cerr << "updating AVars and ALiterals, c = " << c << "  clauses[c]: " << clauses[c] << endl;
@@ -1660,6 +1956,8 @@ namespace MC20{
 //                cerr << endl;
 //            }
 
+
+
             for (VI &cmp : comps) {
                 auto compResult = getResultForComponent(cmp);
                 if(compResult == -1) return -1;
@@ -1672,7 +1970,7 @@ namespace MC20{
     }
 
     void run(){
-//        ifstream f( "test006.cnf" ); cin.rdbuf( f.rdbuf() );
+//        ifstream f( "track1_084.mcc2020_cnf" ); cin.rdbuf( f.rdbuf() );
 
 
         int REPS = 1;
@@ -1682,25 +1980,7 @@ namespace MC20{
             read();
 
             varHashes = vector<Triple>(vars+1);
-//            DEBUG(varHashes); exit(1);
 
-//            {
-//                addToStates( { { 1,2,-3 }, {2,5,-1}, {4,-2,3} }, 7 );
-//                addToStates( { { 1,-2,-3 }, {2,5,-1}, {4,-2,3} }, 7 );
-//
-//                // present values
-//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3, -2} } ) );
-//                DEBUG( extractStateValue( { {5,2,-1}, { 1,-3,2 },  {4,3, -2} } ) );
-//                DEBUG( extractStateValue( { {5,2,-1}, { 1,-3,2 },  {3,4,    -2} } ) );
-//                DEBUG( extractStateValue( { {5,-1,2}, {3,4,    -2}, { -3,1,2 } } ) );
-//                DEBUG( extractStateValue( { {5,-1,2}, {3,4,    -2}, { -3,1,2 }, {} } ) );
-//
-//                // -1
-//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3,    2} } ) );
-//                DEBUG( extractStateValue( { { 1,-3,2 }, {2,5,-1}, {4,3, -2}, {0}, {} } ) );
-//
-//                exit(1);
-//            }
 
             DEBUG(vars);
             DEBUG(cls);
@@ -1710,10 +1990,14 @@ namespace MC20{
 
 
 
-            cerr << "Creating primal graph" << endl;
             Primal prim( clauses, inClauses, cls, vars,0 );
+            cerr << "First preprocessing" << endl;
             prim.preprocess();
+            cerr << "Creating first primal graph" << endl;
             prim.createGraph();
+
+//            DEBUG(prim.V);
+
             auto res = prim.getResult();
 
             big_integer result = 0;
@@ -1808,5 +2092,35 @@ p cnf 9 12
 8 9 0
 9 4 0
 
+
+ p cnf 10 9
+ 1 2 0
+ 2 3 0
+ 4 5 0
+ 5 6 0
+ 6 4 0
+ 7 8 0
+ 8 9 0
+ 9 10 0
+ 10 7 0
+
+
+
+p cnf 19 15
+1 3 0
+2 -3 0
+3 16 0
+16 -6 0
+6 4 -5 0
+5 -15 0
+-16 7 3 0
+7 8 12 13 0
+-9 -8 0
+9 -10 11 0
+10 11 0
+-11 -12 0
+-13 14 15 0
+-14 -15 0
+17 18 19 0
 
  */

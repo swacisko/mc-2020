@@ -2,10 +2,13 @@
 
 Repository with source code of **mcTw** solver - submission to Model Counting problem of MC 2020 competition.<br>
 
-mcTw calculates number of models of given cnf formula. The algorthm is mainly based on dynamic programming on treewidth decomposition of primal and dual graph of given formula, just as described in [[Samer, Szeider]](https://doi.org/10.1016/j.jda.2009.06.002)<br>
-Algorithm tries to find solution based on decomposition of primal graph. If the treewidth of any component of that graph is larger than 24, then it branches: two variables are selected - one variable that occurs in largest number of binary clauses (or ternary if there are no binary. If there are no binary and ternary clauses then node is not selected that way) and one variable for which corresponding node in primal graph maximizes sum of squares of bags' sizes of the treewidth decomposition, to which that node belongs. Then for each 4 possible assignments, algorithm runs recursively.<br>
+mcTw calculates number of models of given CNF formula. The algorthm is mainly based on dynamic programming on treewidth decomposition of primal graph of given formula, just as described in [[Samer, Szeider]](https://doi.org/10.1016/j.jda.2009.06.002)<br>
 
-Dynamic programming on decomposition of dual graph is implemented but not used (it occurs to be much slower than for primal graphs).<br>
+**Short description:**
+
+Algorithm tries to find solution based on decomposition of primal graph. Each connected component of primal graph is treated separately. For given connected graph some preprocessing is done - removing clauses containing both x and 'not x' and setting values of variables that occur is singular clauses - procedure is repeated until no further reduction can be made. If the treewidth of the graph is larger than 23, then branching is applied. First, a set of candidate variables is selected. That set contains all variables that occur in binary clauses and all variables that occur in any of the largest bags of current treewidth decomposition. Each candidate variable is checked using described preprocessing method. As branching node is chosen the one corresponding to such variable which, when set to true or false, reduces maximally treewidth of the current graph. Then for each 2 possible values of the chosen variable algorithm runs recursively.<br>
+
+Dynamic programming on decomposition of dual graph is also implemented, but it is not used (it occurs to be much slower than for primal graphs).<br>
 
 Treewidth is found using flow cutter algorithm ([link here](https://github.com/ben-strasser/flow-cutter-pace16)).
 

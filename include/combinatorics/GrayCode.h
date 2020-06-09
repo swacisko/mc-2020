@@ -44,7 +44,7 @@ namespace GrayCode{
      * @param n
      * @param fun
      */
-    extern void allSubsets( int n, function< void(LL subset, int bit) > fun );
+    extern void allSubsets( int n, function< void(int subset, int bit) > fun );
 
     extern void test();
 

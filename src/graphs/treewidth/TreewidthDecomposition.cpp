@@ -4,6 +4,8 @@
 
 #include <graphs/treewidth/pace.h>
 #include <graphs/GraphInducer.h>
+#include <graphs/treewidth/TreewidthDecomposition.h>
+
 #include "graphs/treewidth/TreewidthDecomposition.h"
 #include "graphs/GraphUtils.h"
 
@@ -48,6 +50,13 @@ bool TreewidthDecomposition::isCorrect(){
     return true;
 }
 
+int TreewidthDecomposition::getWidth() {
+    if(width == -1){
+        for(VI& b : bags) width = max(width,(int)b.size());
+    }
+    return width;
+}
+
 
 void NiceTreewidthDecomposition::makeItNice() {
     const bool debug = false;
@@ -58,12 +67,19 @@ void NiceTreewidthDecomposition::makeItNice() {
     VVI newBags;
     int T = structure.size();
     int N = V->size();
-    forgets = this->par = introduces = VI( 10*N,-1 ); // 4*T should be enough
-    sons = VVI(10*N);
+
+    auto addEmptyEntry = [=,&newTree](){
+        newTree.push_back(VI());
+        this->par.push_back(-1);
+        sons.push_back( VI() );
+        introduces.push_back(-1);
+        forgets.push_back(-1);
+    };
+
     VB was(N, false);
 
     int depth = 0;
-    function< void(int,int,int) > create = [=, &newTree, &newBags, &was, &N, &T, &debug, &create]( int num, int par, int depth ){
+    function< void(int,int,int) > create = [=, &newTree, &newBags, &was, &N, &T, &debug, &create, &addEmptyEntry]( int num, int par, int depth ){
         if(debug){
             for( int i=0; i<depth; i++ ) cerr << "  "; cerr << "num = " << num << "    par = " << par << endl;
         }
@@ -74,15 +90,19 @@ void NiceTreewidthDecomposition::makeItNice() {
                 for( int i=0; i<depth; i++ ) cerr << "  ";
                 cerr << "in a leaf!, creating introducing path" << endl;
             }
-            newTree.push_back(VI()); // adding a real leaf - node that represents abolutely nothing
+//            newTree.push_back(VI()); // adding a real leaf - node that represents abolutely nothing
+            addEmptyEntry();
             newBags.push_back(VI()); // empty bag
 
             VI B;
             for( int b : bags[num] ){
-                newTree.push_back( VI() );
+                addEmptyEntry();
+
                 int s = newTree.size();
                 newTree[s-1].push_back(s-2);
                 newTree[s-2].push_back(s-1);
+
+
                 this->par[s-2] = s-1;
                 sons[s-1].push_back(s-2);
 
@@ -119,7 +139,8 @@ void NiceTreewidthDecomposition::makeItNice() {
                 unordered_set<int> B( ALL(dBag) );
                 for( int b : dBag ){
                     if( !was[b] ){
-                        newTree.push_back( VI() );
+                        addEmptyEntry();
+
                         int s = newTree.size();
                         newTree[s-1].push_back(s-2);
                         newTree[s-2].push_back(s-1);
@@ -146,7 +167,8 @@ void NiceTreewidthDecomposition::makeItNice() {
                 for(int b : dBag) was[b] = true;
                 for( int b : numBag ){
                     if( !was[b] ){
-                        newTree.push_back( VI() );
+                        addEmptyEntry();
+
                         int s = newTree.size();
                         newTree[s-1].push_back(s-2);
                         newTree[s-2].push_back(s-1);
@@ -180,7 +202,8 @@ void NiceTreewidthDecomposition::makeItNice() {
             int d = toJoin.back();
             toJoin.pop_back();
 
-            newTree.push_back(VI());
+            addEmptyEntry();
+
             int s = newTree.size();
             newTree[s-1].push_back(d);
             newTree[d].push_back(s-1);
@@ -209,7 +232,8 @@ void NiceTreewidthDecomposition::makeItNice() {
 
             VI B = bags[num];
             while( !B.empty() ){
-                newTree.push_back( VI() );
+                addEmptyEntry();
+
                 int s = newTree.size();
                 newTree[s-1].push_back(s-2);
                 newTree[s-2].push_back(s-1);

@@ -11,15 +11,15 @@ namespace GrayCode{
      * @param n
      * @return gray code that is n-th in order.
      */
-    LL nthGrayCode( LL n ){ return n ^ (n>>1); }
+    int nthGrayCode( int n ){ return n ^ (n>>1); }
 
     /**
      *
      * @param g
      * @return reverse of given code - that is n such that nthGrayCode(n) == g
      */
-    LL nthGrayCodeReverse( LL g ){
-        LL n = 0;
+    int nthGrayCodeReverse( int g ){
+        int n = 0;
         for (; g; g >>= 1)
             n ^= g;
         return n;
@@ -30,7 +30,7 @@ namespace GrayCode{
      * @param n
      * @return index of the bit that is changed during transition between (n-1)-th gray code and n-th gray code, or -1 if n <= 0.
      */
-    int getTransitionBit(LL n){
+    int getTransitionBit(int n){
         if( n <= 0 ) return -1;
         return __builtin_ctzll( nthGrayCode(n-1) ^ nthGrayCode(n) );
     }
@@ -42,7 +42,7 @@ namespace GrayCode{
      * @param n
      * @param fun
      */
-    void allSubsets( int n, function< void(LL subset, int bit) > fun ){
+    void allSubsets( int n, function< void(int subset, int bit) > fun ){
         for( LL i=0; i < (1ll<<n); i++ ){
 //            cerr << "transition bit for " << i << ": " << getTransitionBit(i) << endl;
             fun( nthGrayCode(i), getTransitionBit(i) );

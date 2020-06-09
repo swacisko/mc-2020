@@ -11,7 +11,7 @@
 class TreewidthDecomposition{
 public:
 
-    TreewidthDecomposition(VVI& v, VVI str, VVI bg ) : V(&v), structure(str), bags(bg) {}
+    TreewidthDecomposition(VVI& v, VVI str, VVI bg ) : V(&v), structure(str), bags(bg), width(-1) {}
 
     VVI& getStructure(){ return structure; }
     VVI& getBags(){ return bags; }
@@ -20,7 +20,11 @@ public:
 
     bool isCorrect();
 
+    int getWidth();
+
 protected:
+    int width;
+
     VVI* V;
     VVI structure; // structure of the tree
     VVI bags; // bags[i] is the list of nodes that are contained in i-th tree node
